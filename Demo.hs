@@ -10,7 +10,7 @@ import Data.ByteString (ByteString)
 import Data.Data.Lens (onceUpon')
 import Data.Generics -- (cast, Data, empty, Typeable, typeRep)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Serialize (encode)
+import Data.Serialize (decode, encode, Serialize)
 import Language.Haskell.TH (Name, mkName)
 import Language.Haskell.TH.Instances ()
 import Language.Haskell.TH.Syntax (OccName(..), NameFlavour(..))
@@ -28,7 +28,7 @@ data Hop key
 data TraversalPath s a = TraversalPath {_traversalPathHops :: [Hop ByteString]}
 
 traversalFromPath ::
-    forall s a. (Data s, Data a {-, Data (Index s), Data (IxValue s)-})
+    forall s a. (Data s, Data a, Serialize (Index s))
     => TraversalPath s a -> Traversal' s a
 traversalFromPath (TraversalPath []) =
     castTraversal (Proxy :: Proxy (s, a)) id
@@ -36,7 +36,7 @@ traversalFromPath (TraversalPath (h : hs)) =
     withHopType (Proxy :: Proxy s) h go
       (error $ "bad hop from " ++ show (typeRep (Proxy :: Proxy s)) ++ " : " ++ show h)
     where
-      go :: forall b. Data b => Proxy b -> Traversal' s a
+      go :: forall b. (Data b, Serialize (Index b)) => Proxy b -> Traversal' s a
       go _ =
           (traversalFromHop h :: Traversal' s b) .
           (traversalFromPath (TraversalPath hs) :: Traversal' b a)
@@ -55,7 +55,7 @@ castTraversal _ l =
 -- | Apply the proxy type @a@ resulting from doing a hop from @s@ to a
 -- function.
 withHopType ::
-    forall s r. (Data s{-, Key key-})
+    forall s r. (Data s, Serialize (Index s))
     => Proxy s
     -> Hop ByteString
     -> (forall a. Data a => Proxy a -> r)
@@ -74,8 +74,10 @@ withHopType _p (TupleHop n) go r0 =
     where
       go' :: forall b. Data b => b -> r
       go' _ = go (Proxy :: Proxy b)
-withHopType _p (IndexHop key) go r0 =
-    error "FIXME"
+withHopType _p (IndexHop bytes) go r0 =
+  case decode bytes :: Either String (Index s) of
+    Left e -> error e
+    Right key -> error "FIXME"
 
 -- | Turn a hop which we know will go from @s -> a@ into a Traversal'.
 traversalFromHop :: forall s a key. (Data s, Data a, Show key) => Hop key -> Traversal' s a
