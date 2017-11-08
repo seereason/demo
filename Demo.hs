@@ -13,7 +13,8 @@ import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Serialize (decode, encode, Serialize)
 import Language.Haskell.TH (Name, mkName)
 import Language.Haskell.TH.Instances ()
-import Language.Haskell.TH.Syntax (OccName(..), NameFlavour(..))
+import Language.Haskell.TH.Syntax (OccName(..), NameFlavour(..), NameSpace(..), PkgName(..), ModName(..))
+import Language.Haskell.TH.TypeGraph.Serialize (deriveSerialize)
 import Test.HUnit hiding (Testable)
 
 data Hop key
@@ -98,6 +99,14 @@ traversalFromHop (TupleHop n) =
 traversalFromHop (IndexHop key) = error "FIXME"
 
 -- TESTS
+
+$(deriveSerialize [t|Name|])
+$(deriveSerialize [t|OccName|])
+$(deriveSerialize [t|NameFlavour|])
+$(deriveSerialize [t|NameSpace|])
+$(deriveSerialize [t|PkgName|])
+$(deriveSerialize [t|ModName|])
+type instance Index Name = ()
 
 h1, h2 :: Hop ByteString -- Int
 [h1, h2] = fmap (fmap encode) $ recordHops (Proxy :: Proxy Name)
