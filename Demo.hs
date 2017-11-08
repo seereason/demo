@@ -41,17 +41,6 @@ traversalFromPath (TraversalPath (h : hs)) =
           (traversalFromHop h :: Traversal' s b) .
           (traversalFromPath (TraversalPath hs) :: Traversal' b a)
 
--- | Type safe cast of a traversal
-castTraversal ::
-    forall a b f s proxy. (Applicative f, Typeable a, Typeable b)
-    => proxy (a, b)
-    -> ((a -> f a) -> s -> f s) -- Traversal' s a
-    -> ((b -> f b) -> s -> f s) -- (Traversal' s b)
-castTraversal _ l =
-    case (eqT :: Maybe (a :~: b)) of
-      Just Refl -> l
-      Nothing -> const pure
-
 -- | Apply the proxy type @a@ resulting from doing a hop from @s@ to a
 -- function.
 withHopType ::
@@ -94,6 +83,17 @@ traversalFromHop (TupleHop n) =
       field :: s -> a
       field = gmapQi (pred n) (fromMaybe (error "invalid hop 1") . cast)
 traversalFromHop (IndexHop key) = error "FIXME"
+
+-- | Type safe cast of a traversal
+castTraversal ::
+    forall a b f s proxy. (Applicative f, Typeable a, Typeable b)
+    => proxy (a, b)
+    -> ((a -> f a) -> s -> f s) -- Traversal' s a
+    -> ((b -> f b) -> s -> f s) -- (Traversal' s b)
+castTraversal _ l =
+    case (eqT :: Maybe (a :~: b)) of
+      Just Refl -> l
+      Nothing -> const pure
 
 -- TESTS
 
