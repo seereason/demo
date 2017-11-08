@@ -29,7 +29,7 @@ data Hop key
 data TraversalPath s a = TraversalPath {_traversalPathHops :: [Hop ByteString]}
 
 traversalFromPath ::
-    forall s a. (Data s, Data a, Serialize (Index s))
+    forall s a. (Data s, Data a, Serialize (Index s), Serialize (Index a))
     => TraversalPath s a -> Traversal' s a
 traversalFromPath (TraversalPath []) =
     castTraversal (Proxy :: Proxy (s, a)) id
@@ -107,6 +107,8 @@ $(deriveSerialize [t|NameSpace|])
 $(deriveSerialize [t|PkgName|])
 $(deriveSerialize [t|ModName|])
 type instance Index Name = ()
+type instance Index OccName = ()
+type instance Index NameFlavour = ()
 
 h1, h2 :: Hop ByteString -- Int
 [h1, h2] = fmap (fmap encode) $ recordHops (Proxy :: Proxy Name)
