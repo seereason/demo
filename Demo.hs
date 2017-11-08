@@ -53,9 +53,9 @@ castTraversal _ l =
 -- | Apply the proxy type @a@ resulting from doing a hop from @s@ to a
 -- function.
 withHopType ::
-    forall s key r. (Data s{-, Key key-})
+    forall s r. (Data s{-, Key key-})
     => Proxy s
-    -> Hop key
+    -> Hop ByteString
     -> (forall a. Data a => Proxy a -> r)
     -> r -> r
 withHopType _p (Field cpos fpos) go r0 =
