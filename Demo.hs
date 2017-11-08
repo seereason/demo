@@ -10,10 +10,11 @@ import Data.ByteString (ByteString)
 import Data.Data.Lens (onceUpon')
 import Data.Generics -- (cast, Data, empty, Typeable, typeRep)
 import Data.Maybe (fromMaybe, listToMaybe)
-import Data.Serialize (encode)
+import Data.Serialize (decode, encode, Serialize)
 import Language.Haskell.TH (Name, mkName)
 import Language.Haskell.TH.Instances ()
 import Language.Haskell.TH.Syntax (OccName(..), NameFlavour(..))
+import Language.Haskell.TH.TypeGraph.Serialize (deriveSerialize)
 import Test.HUnit hiding (Testable)
 
 data Hop key
@@ -23,6 +24,8 @@ data Hop key
     | TupleHop {_tpos :: Int} -- ^ Hop to nth element of a tuple
     | IndexHop {_key :: key} -- ^ Hop from an instance of 'Index', such as Map, via some key value
     deriving (Show, Functor)
+
+$(deriveSerialize [t|Hop|])
 
 -- | The ByteString is a serialized value of type @Index s@
 data TraversalPath s a = TraversalPath {_traversalPathHops :: [Hop ByteString]}
@@ -40,6 +43,11 @@ traversalFromPath (TraversalPath (h : hs)) =
       go _ =
           (traversalFromHop h :: Traversal' s b) .
           (traversalFromPath (TraversalPath hs) :: Traversal' b a)
+
+withDecodedHop ::
+    forall s r. (Data s, Data (Index s), Serialize (Index s), Show (Index s))
+    => Proxy s -> ByteString -> (Either String (Hop (Index s)) -> r) -> r
+withDecodedHop proxy bytes f = f (decode bytes :: Either String (Hop (Index s)))
 
 -- | Apply the proxy type @a@ resulting from doing a hop from @s@ to a
 -- function.
