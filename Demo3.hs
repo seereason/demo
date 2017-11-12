@@ -76,25 +76,25 @@ instance Show (V TypeRep) where
             show (V (typeRepArgs t))] :: String) ++ ")"
 
 instance Show (V a) => Show (V [a]) where
-    show (V xs) = "[" ++ intercalate ", " (fmap (show . V) xs) ++ "]" 
+    show (V xs) = "[" ++ intercalate ", " (fmap (show . V) xs) ++ "]"
 
 -- | Given a type @s@, determine the type @a@ resulting from doing some
 -- hop and apply it to a function @go@.
 -- @@
--- λ> withHopType (Proxy :: Proxy CreateProcess) (Field 0 1) typeRep
+-- λ> withHopType (Proxy :: Proxy (CreateProcess, CmdSpec)) (Field 0 1) typeRep goIxedTest
 -- CmdSpec
--- λ> withHopType (Proxy :: Proxy CmdSpec) (Field 2 2) typeRep
+-- λ> withHopType (Proxy :: Proxy (CmdSpec, String)) (Field 2 2) typeRep goIxedTest
 -- [[Char]]
--- λ> withHopType (Proxy :: Proxy (Int, Float, String)) (TupleHop 2) typeRep
+-- λ> withHopType (Proxy :: Proxy ((Int, Float, String), Float)) (TupleHop 2) typeRep goIxedTest
 -- Float
--- λ> withHopType (Proxy :: Proxy (Int, Float, String)) (TupleHop 3) typeRep
+-- λ> withHopType (Proxy :: Proxy ((Int, Float, String), String)) (TupleHop 3) typeRep goIxedTest
 -- [Char]
 -- @@
 -- We can also handle any Ixed types explicitly handled by goIx.
 -- @@
--- λ> withHopType (Proxy :: Proxy [Int]) (IndexHop (encode (123 :: Int))) typeRep
+-- λ> withHopType (Proxy :: Proxy ([Int], Int)) (IndexHop (encode (123 :: Int))) typeRep goIxedTest
 -- Int
--- λ> withHopType (Proxy :: Proxy (Map Char Float)) (IndexHop (encode 'x')) typeRep
+-- λ> withHopType (Proxy :: Proxy (Map Char Float, Float)) (IndexHop (encode 'x')) typeRep goIxedTest
 -- *** Exception: goIxed - unsupported Ixed type: Map Char Float
 -- @@
 withHopType ::
@@ -152,12 +152,11 @@ goIxed2Test ::
     => Proxy (s, a)
     -> Hop ByteString
     -> Traversal' s a
-    -- mkQ :: (Typeable b, Typeable a) => r -> (b -> r) -> a -> r
-    -- extQ :: (Typeable b, Typeable a) => (a -> q) -> (b -> q) -> a -> q
 goIxed2Test p h = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
     where
       e :: Traversal' s a
-      e = error $ "traversalFromHop - unknown or unsupported Ixed type: t=" ++ show (typeRep (Proxy :: Proxy s)) ++ ", Index t= " ++ show (typeRep (Proxy :: Proxy a))
+      e = error $ "traversalFromHop - unknown or unsupported Ixed type: t=" ++ show (typeRep (Proxy :: Proxy s)) ++
+                  ", Index t= " ++ show (typeRep (Proxy :: Proxy a))
       f1 :: Proxy ([Int], Int) -> Traversal' s a
       f1 _ = castTraversal (Proxy :: Proxy ([Int], s, Int, a)) (traversalFromHopIndexed h)
       f2 :: Proxy ([String], String) -> Traversal' s a
@@ -172,9 +171,9 @@ goIxed2Null _ _ = error "goIxed2Null"
 
 -- | 'withHopType', extended to use the IxValue instance of s to get the hop type.
 -- @@
--- λ> withHopTypeIndexed (Proxy :: Proxy [Int]) (IndexHop (encode (123 :: Int))) typeRep empty
+-- λ> withHopTypeIndexed (Proxy :: Proxy ([Int], Int)) (IndexHop (encode (123 :: Int))) typeRep
 -- Int
--- λ> withHopTypeIndexed (Proxy :: Proxy (Map Char Float)) (IndexHop (encode 'x')) typeRep empty
+-- λ> withHopTypeIndexed (Proxy :: Proxy (Map Char Float, Float)) (IndexHop (encode 'x')) typeRep
 -- Float
 -- @@
 withHopTypeIndexed ::
@@ -188,17 +187,17 @@ withHopTypeIndexed _p h go = withHopType _p h go goIxedNull
 
 -- | Turn a hop which we know will go from @s -> a@ into a Traversal'.
 -- @@
--- λ> toListOf (traversalFromHop goIxedTest (Field 2 2) :: Traversal' CmdSpec [[Char]]) (constrs !! 1)
+-- λ> toListOf (traversalFromHop goIxed2Test (Field 2 2) :: Traversal' CmdSpec [[Char]]) (constrs !! 1)
 -- [[]]
--- λ> toListOf (traversalFromHop (Field 1 1) :: Traversal' CmdSpec [Char]) (constrs !! 0)
+-- λ> toListOf (traversalFromHop goIxed2Test (Field 1 1) :: Traversal' CmdSpec [Char]) (constrs !! 0)
 -- [""]
--- λ> toListOf (traversalFromHop (TupleHop 2) :: Traversal' (Int, Float, Char) Float) (1,1.5,'x')
+-- λ> toListOf (traversalFromHop goIxed2Test (TupleHop 2) :: Traversal' (Int, Float, Char) Float) (1,1.5,'x')
 -- [1.5]
--- λ> toListOf (traversalFromHop (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]
+-- λ> toListOf (traversalFromHop goIxed2Test (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]
 -- ["c"]
--- λ> toListOf (traversalFromHop (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
+-- λ> toListOf (traversalFromHop goIxed2Test (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
 -- [7]
--- λ> toListOf (traversalFromHop (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)])
+-- λ> toListOf (traversalFromHop goIxed2Test (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)])
 -- *** Exception: traversalFromHop - unknown or unsupported Ixed type: t=Map Char Float, Index t= Float
 -- @@
 traversalFromHop ::
