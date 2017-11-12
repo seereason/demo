@@ -37,21 +37,21 @@ tests =
   , TestCase (assertEqual "withHopTypeIndexed 2" "Float"
                 (withHopTypeIndexed (Proxy :: Proxy (Map Char Float, Float)) (IndexHop (encode 'x')) (show . typeRep)))
   , TestCase (assertEqual "withHopTraversal 1" [[]]
-                (toListOf (withHopTraversal goIxed2Test (Field 2 2) id :: Traversal' CmdSpec [[Char]]) (constrs !! 1)))
+                (toListOf (withHopTraversal goIxed2Test id (Field 2 2) :: Traversal' CmdSpec [[Char]]) (constrs !! 1)))
   , TestCase (assertEqual "withHopTraversal 2" [""]
-                (toListOf (withHopTraversal goIxed2Test (Field 1 1) id :: Traversal' CmdSpec [Char]) (constrs !! 0)))
+                (toListOf (withHopTraversal goIxed2Test id (Field 1 1) :: Traversal' CmdSpec [Char]) (constrs !! 0)))
   , TestCase (assertEqual "withHopTraversal 3" [1.5]
-                (toListOf (withHopTraversal goIxed2Test (TupleHop 2) id :: Traversal' (Int, Float, Char) Float) (1,1.5,'x')))
+                (toListOf (withHopTraversal goIxed2Test id (TupleHop 2) :: Traversal' (Int, Float, Char) Float) (1,1.5,'x')))
   , TestCase (assertEqual "withHopTraversal 4" ["c"]
-                (toListOf (withHopTraversal goIxed2Test (IndexHop (encode (2 :: Int))) id :: Traversal' [String] String) ["a","b","c","d"]))
+                (toListOf (withHopTraversal goIxed2Test id (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]))
   , TestCase (assertEqual "withHopTraversal 5" [7]
-                (toListOf (withHopTraversal goIxed2Test (IndexHop (encode (2 :: Int))) id :: Traversal' [Int] Int) [9,8,7,6]))
+                (toListOf (withHopTraversal goIxed2Test id (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]))
   , TestCase (assertEqual "withHopTraversal 6" []
-                (toListOf (withHopTraversal goIxed2Test (IndexHop (encode 'b')) id :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)]))) -- "withHopTraversal - unknown or unsupported Ixed type: t=Map Char Float, Index t= Float"
+                (toListOf (withHopTraversal goIxed2Test id (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)]))) -- "withHopTraversal - unknown or unsupported Ixed type: t=Map Char Float, Index t= Float"
   , TestCase (assertEqual "withHopTraversalIndexed 1" [7]
-                (toListOf (withHopTraversalIndexed (IndexHop (encode (2 :: Int))) id :: Traversal' [Int] Int) [9,8,7,6]))
+                (toListOf (withHopTraversalIndexed id (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]))
   , TestCase (assertEqual "withHopTraversalIndexed 2" ["c"]
-                (toListOf (withHopTraversalIndexed (IndexHop (encode (2 :: Int))) id :: Traversal' [String] String) ["a","b","c","d"]))
+                (toListOf (withHopTraversalIndexed id (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]))
   , TestCase (assertEqual "withHopTraversalIndexed 3" [1.5]
-                (toListOf (withHopTraversalIndexed (IndexHop (encode 'b')) id :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)] :: Map Char Float)))
+                (toListOf (withHopTraversalIndexed id (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)] :: Map Char Float)))
   ]
