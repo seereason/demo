@@ -32,21 +32,22 @@ data Hop key
       -- ^ Hop to one of the fields of a record - the constructor and
       -- field number are specified.
     | TupleHop {_tpos :: Int} -- ^ Hop to nth element of a tuple
-    | IndexHop {_key :: key} -- ^ Hop from an instance of 'Index', such as Map, via some key value
+    | IndexHop {_key :: key}
+    -- ^ Hop from an instance of 'Ixed', such as @[]@ or @Map@, via
+    -- some key of the corresponding 'Index' type, to a value of the
+    -- corresponding 'IxValue' type.  For serialization the
+    -- 'Data.Serialize.encode' function is applied to the key to make
+    -- this a monomorphic type @Hop ByteString@.
     deriving (Show, Functor, Data, Typeable)
 
 -- | Convert a sequence of Hops into a traversal:
 -- @@
 -- | Turn a hop which we know will go from @s -> a@ into a Traversal'.
 -- @@
--- λ> toListOf (traversalFromPath (TraversalPath [Field 2 2, IndexHop (encode (1 :: Int))]) :: Traversal' CmdSpec [[Char]]) (constrs !! 1)
--- [[]]
--- λ> toListOf (traversalFromHop (Field 1 1) :: Traversal' CmdSpec [Char]) (constrs !! 0)
--- [""]
--- λ> toListOf (traversalFromHop (TupleHop 2) :: Traversal' (Int, Float, Char) Float) (1,1.5,'x')
--- [1.5]
--- λ> toListOf (traversalFromHopIndexed (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
--- [7]
+-- λ> toListOf (traversalFromPath (TraversalPath [Field 2 2]) :: Traversal' CmdSpec [String]) (RawCommand "cmd" ["arg1", "arg2"])
+-- [["arg1", "arg2"]]
+-- λ> toListOf (traversalFromPath (TraversalPath [Field 2 2, IndexHop (encode (1 :: Int))]) :: Traversal' CmdSpec String) (RawCommand "cmd" ["arg1", "arg2"])
+-- ["arg2"]
 -- @@
 traversalFromPath ::
     forall s a. (Data s, Typeable a)
@@ -141,10 +142,12 @@ withHopTypeIndexed _p h go r0 = withHopType _p h go r0
 -- [""]
 -- λ> toListOf (traversalFromHop (TupleHop 2) :: Traversal' (Int, Float, Char) Float) (1,1.5,'x')
 -- [1.5]
+-- λ> toListOf (traversalFromHop (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]
+-- ["c"]
 -- λ> toListOf (traversalFromHop (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
 -- [7]
--- λ> toListOf (traversalFromHop (IndexHop (encode (2 :: Int))) :: Traversal' [String] Int) ["a","b","c","d"]
--- ["c"]
+-- λ> toListOf (traversalFromHop (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)])
+-- *** Exception: goIx - unsupported Ixed type: Map Char Float
 -- @@
 traversalFromHop ::
     forall s a. (Data s, Typeable a)
@@ -166,12 +169,31 @@ traversalFromHop h@(TupleHop n) =
       go :: forall b. Data b => b -> a
       go b = fromMaybe (error $ "invalid field hop for " ++ gshow b ++ ": " ++ show h) (cast b)
 traversalFromHop h@(IndexHop bytes) =
-    fromMaybe (error $ "traversalFromHop - unexpected hop from " ++ show (typeRep (Proxy :: Proxy s)) ++ ": " ++ show h)
-              (goIx (Proxy :: Proxy s) h undefined undefined)
+    goIx2 (Proxy :: Proxy (s, a)) h
+      (error $ "traversalFromHop - unexpected hop from " ++ show (typeRep (Proxy :: Proxy s)) ++ ": " ++ show h)
 
+goIx2 :: forall s a r. (Data s, Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> r -> Traversal' s a
+goIx2 p h r0
+    | isJust (eqT :: Maybe ((s, a) :~: ([Int], Int))) =
+        (castTraversal (Proxy :: Proxy ([Int], s, Int, a)) (traversalFromHopIndexed h))
+goIx2 p h r0
+    | isJust (eqT :: Maybe ((s, a) :~: ([String], String))) =
+        (castTraversal (Proxy :: Proxy ([String], s, String, a)) (traversalFromHopIndexed h))
+goIx2 p h r0 = error $ "goIx - unsupported Ixed type: " ++ show (typeRep (Proxy :: Proxy s))
+
+-- | 'traversalFromHop', extended to use the IxValue instance of s to get the hop type.
+-- @@
+-- λ> toListOf (traversalFromHopIndexed (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
+-- [7]
+-- λ> toListOf (traversalFromHopIndexed (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]
+-- ["c"]
+-- λ> toListOf (traversalFromHopIndexed (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)] :: Map Char Float)
+-- ["c"]
+-- @@
 traversalFromHopIndexed ::
     forall s a. (Data s, Ixed s, Typeable (Index s), Serialize (Index s), Typeable (IxValue s), Typeable a)
-    => Hop ByteString -> Traversal' s a
+    => Hop ByteString
+    -> Traversal' s a
 traversalFromHopIndexed (IndexHop bytes) =
     idx (decode bytes :: Either String (Index s))
     where
