@@ -55,7 +55,7 @@ traversalFromPath ::
     -> Traversal' s a
 traversalFromPath (TraversalPath []) = castTraversal (Proxy :: Proxy (s, s, s, a)) id
 traversalFromPath (TraversalPath (h : hs)) =
-    withHopType (Proxy :: Proxy s) h go (error "traversalFromPath")
+    withHopType (Proxy :: Proxy s) h go
     where
       go :: forall b. Data b => Proxy b -> Traversal' s a
       go _ =
@@ -77,29 +77,31 @@ instance Show (V a) => Show (V [a]) where
 -- | Given a type @s@, determine the type @a@ resulting from doing some
 -- hop and apply it to a function @go@.
 -- @@
--- λ> withHopType (Proxy :: Proxy CreateProcess) (Field 0 1) typeRep empty
+-- λ> withHopType (Proxy :: Proxy CreateProcess) (Field 0 1) typeRep
 -- CmdSpec
--- λ> withHopType (Proxy :: Proxy CmdSpec) (Field 2 2) typeRep empty
+-- λ> withHopType (Proxy :: Proxy CmdSpec) (Field 2 2) typeRep
 -- [[Char]]
--- λ> withHopType (Proxy :: Proxy (Int, Float, String)) (TupleHop 2) typeRep empty
+-- λ> withHopType (Proxy :: Proxy (Int, Float, String)) (TupleHop 2) typeRep
 -- Float
--- λ> withHopType (Proxy :: Proxy (Int, Float, String)) (TupleHop 3) typeRep empty
+-- λ> withHopType (Proxy :: Proxy (Int, Float, String)) (TupleHop 3) typeRep
 -- [Char]
 -- @@
 -- We can also handle any Ixed types explicitly handled by goIx.
 -- @@
--- λ> withHopType (Proxy :: Proxy [Int]) (IndexHop (encode (123 :: Int))) typeRep empty
+-- λ> withHopType (Proxy :: Proxy [Int]) (IndexHop (encode (123 :: Int))) typeRep
 -- Int
--- λ> withHopType (Proxy :: Proxy (Map Char Float)) (IndexHop (encode 'x')) typeRep empty
--- *** Exception: goIx - unsupported Ixed type: Map Char Float
+-- λ> withHopType (Proxy :: Proxy (Map Char Float)) (IndexHop (encode 'x')) typeRep
+-- *** Exception: goIxed - unsupported Ixed type: Map Char Float
 -- @@
 withHopType ::
     forall s r. (Data s)
     => Proxy s
     -> Hop ByteString
-    -> (forall d. Data d => Proxy d -> r) -> r -> r
-withHopType _p (Field cpos fpos) go r0 =
-    maybe r0 (gmapQi (pred fpos) go') constr
+    -> (forall d. Data d => Proxy d -> r) -> r
+withHopType _p (Field cpos fpos) go =
+    maybe (error $ "withHopType - " ++ show (typeRep (Proxy :: Proxy s)) ++ " constructor index out of range: " ++ show cpos)
+          (gmapQi (pred fpos) go')
+          constr
     where
       -- Get a value from 'constrs' corresponding to the constructor
       -- at position cpos.  Will be Nothing if cpos is out of range.
@@ -108,18 +110,18 @@ withHopType _p (Field cpos fpos) go r0 =
       -- Turn the empty hop destination value into a type and apply to go
       go' :: forall b. Data b => b -> r
       go' _ = go (Proxy :: Proxy b)
-withHopType _p (TupleHop n) go r0 =
+withHopType _p (TupleHop n) go =
     gmapQi (pred n) go' (empty :: s)
     where
       go' :: forall b. Data b => b -> r
       go' _ = go (Proxy :: Proxy b)
-withHopType p h go r0 =
-    fromMaybe (error $ "Unexpected hop " ++ show (typeRep p)) (goIx p h go r0)
+withHopType p h go =
+    goIxed p h go
 
-goIx :: forall s r. (Typeable s) => Proxy s -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r -> Maybe r
-goIx p h go r0 | isJust (eqT :: Maybe (s :~: [Int])) = Just $ withHopTypeIndexed (Proxy :: Proxy [Int]) h go r0
-goIx p h go r0 | isJust (eqT :: Maybe (s :~: [String])) = Just $ withHopTypeIndexed (Proxy :: Proxy [String]) h go r0
-goIx p h go r0 = error $ "goIx - unsupported Ixed type: " ++ show (typeRep (Proxy :: Proxy s))
+goIxed :: forall s r. (Typeable s) => Proxy s -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r
+goIxed p h go | isJust (eqT :: Maybe (s :~: [Int])) = withHopTypeIndexed (Proxy :: Proxy [Int]) h go
+goIxed p h go | isJust (eqT :: Maybe (s :~: [String])) = withHopTypeIndexed (Proxy :: Proxy [String]) h go
+goIxed p h go = error $ "goIxed - unsupported Ixed type: " ++ show (typeRep (Proxy :: Proxy s))
 
 -- | 'withHopType', extended to use the IxValue instance of s to get the hop type.
 -- @@
@@ -130,9 +132,9 @@ goIx p h go r0 = error $ "goIx - unsupported Ixed type: " ++ show (typeRep (Prox
 -- @@
 withHopTypeIndexed ::
     forall s r. (Data s, Data (IxValue s))
-    => Proxy s -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r -> r
-withHopTypeIndexed _p (IndexHop _) go r0 = go (Proxy :: Proxy (IxValue s))
-withHopTypeIndexed _p h go r0 = withHopType _p h go r0
+    => Proxy s -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r
+withHopTypeIndexed _p (IndexHop _) go = go (Proxy :: Proxy (IxValue s))
+withHopTypeIndexed _p h go = withHopType _p h go
 
 -- | Turn a hop which we know will go from @s -> a@ into a Traversal'.
 -- @@
@@ -147,11 +149,12 @@ withHopTypeIndexed _p h go r0 = withHopType _p h go r0
 -- λ> toListOf (traversalFromHop (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
 -- [7]
 -- λ> toListOf (traversalFromHop (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)])
--- *** Exception: goIx - unsupported Ixed type: Map Char Float
+-- *** Exception: traversalFromHop - unknown or unsupported Ixed type: t=Map Char Float, Index t= Float
 -- @@
 traversalFromHop ::
     forall s a. (Data s, Typeable a)
-    => Hop ByteString -> Traversal' s a
+    => Hop ByteString
+    -> Traversal' s a
 traversalFromHop h@(Field _cpos fpos) =
     onceUpon' field
     where
@@ -168,18 +171,17 @@ traversalFromHop h@(TupleHop n) =
       field s = gmapQi (pred n) go s
       go :: forall b. Data b => b -> a
       go b = fromMaybe (error $ "invalid field hop for " ++ gshow b ++ ": " ++ show h) (cast b)
-traversalFromHop h@(IndexHop bytes) =
-    goIx2 (Proxy :: Proxy (s, a)) h
-      (error $ "traversalFromHop - unexpected hop from " ++ show (typeRep (Proxy :: Proxy s)) ++ ": " ++ show h)
+traversalFromHop h@(IndexHop bytes) = goIxed2 (Proxy :: Proxy (s, a)) h
 
-goIx2 :: forall s a r. (Data s, Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> r -> Traversal' s a
-goIx2 p h r0
+goIxed2 :: forall s a r. (Data s, Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> Traversal' s a
+goIxed2 p h
     | isJust (eqT :: Maybe ((s, a) :~: ([Int], Int))) =
         (castTraversal (Proxy :: Proxy ([Int], s, Int, a)) (traversalFromHopIndexed h))
-goIx2 p h r0
+goIxed2 p h
     | isJust (eqT :: Maybe ((s, a) :~: ([String], String))) =
         (castTraversal (Proxy :: Proxy ([String], s, String, a)) (traversalFromHopIndexed h))
-goIx2 p h r0 = error $ "goIx - unsupported Ixed type: " ++ show (typeRep (Proxy :: Proxy s))
+goIxed2 p h =
+    error $ "traversalFromHop - unknown or unsupported Ixed type: t=" ++ show (typeRep (Proxy :: Proxy s)) ++ ", Index t= " ++ show (typeRep (Proxy :: Proxy a))
 
 -- | 'traversalFromHop', extended to use the IxValue instance of s to get the hop type.
 -- @@
