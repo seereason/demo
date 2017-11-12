@@ -54,7 +54,7 @@ data Hop key
 traversalFromPath ::
     forall s a. (Data s, Typeable a)
     => (forall s r. (Typeable s) => Proxy (s, a) -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r)
-    -> (forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> Traversal' s a)
+    -> (forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (Traversal' s a -> r) -> r)
     -> TraversalPath s a
     -> Traversal' s a
 traversalFromPath _ _ (TraversalPath []) = castTraversal (Proxy :: Proxy (s, s, s, a)) id
@@ -151,8 +151,9 @@ goIxed2Test ::
     forall s a r. (Typeable s, Typeable a)
     => Proxy (s, a)
     -> Hop ByteString
-    -> Traversal' s a
-goIxed2Test p h = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
+    -> (Traversal' s a -> r)
+    -> r
+goIxed2Test p h f = f $ (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
     where
       e :: Traversal' s a
       e = error $ "traversalFromHop - unknown or unsupported Ixed type: t=" ++ show (typeRep (Proxy :: Proxy s)) ++
@@ -176,8 +177,9 @@ goIxed2Null ::
     forall s a r. (Typeable s, Typeable a)
     => Proxy (s, a)
     -> Hop ByteString
-    -> Traversal' s a
-goIxed2Null _ _ = error "goIxed2Null"
+    -> (Traversal' s a -> r)
+    -> r
+goIxed2Null _ _ _ = error "goIxed2Null"
 
 -- | 'withHopType', extended to use the IxValue instance of s to get the hop type.
 -- @@
@@ -212,7 +214,7 @@ withHopTypeIndexed _p h go = withHopType _p h go goIxedNull
 -- @@
 withHopTraversal ::
     forall s a r. (Data s, Typeable a)
-    => (forall s a r. (Data s, Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> Traversal' s a)
+    => (forall s a r. (Data s, Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (Traversal' s a -> r) -> r)
     -> (Traversal' s a -> r)
     -> Hop ByteString
     -> r
@@ -232,7 +234,7 @@ withHopTraversal _ go h@(TupleHop n) =
       field s = gmapQi (pred n) go' s
       go' :: forall b. Data b => b -> a
       go' b = fromMaybe (error $ "invalid field hop for " ++ gshow b ++ ": " ++ show h) (cast b)
-withHopTraversal goIxed3 go h@(IndexHop bytes) = go (goIxed3 (Proxy :: Proxy (s, a)) h)
+withHopTraversal goIxed3 go h@(IndexHop bytes) = goIxed3 (Proxy :: Proxy (s, a)) h go
 
 -- | withHopTraversal, extended to use the IxValue instance of s to get the hop type.
 -- @@
