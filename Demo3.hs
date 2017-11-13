@@ -15,6 +15,7 @@ module Demo3
     , withHopTraversal
     , withHopTraversalIndexed
     , castTraversal
+    , castTraversal'
     , makeFieldQuery
     ) where
 
@@ -43,6 +44,10 @@ data Hop key
     -- this a monomorphic type @Hop ByteString@.
     deriving (Show, Functor, Data, Typeable)
 
+type TypeQuery r = forall d. Data d => Proxy d -> r
+type FieldQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TypeQuery r -> r
+type IxedQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (Traversal' s a -> r) -> r
+
 -- | Convert a sequence of Hops into a traversal:
 -- @@
 -- | Turn a hop which we know will go from @s -> a@ into a Traversal'.
@@ -54,8 +59,8 @@ data Hop key
 -- @@
 traversalFromPath ::
     forall s a. (Data s, Typeable a)
-    => (forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r)
-    -> (forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (Traversal' s a -> r) -> r)
+    => FieldQuery
+    -> IxedQuery
     -> TraversalPath s a
     -> Traversal' s a
 traversalFromPath _ _ (TraversalPath []) = castTraversal (Proxy :: Proxy (s, s, s, a)) id
@@ -102,8 +107,8 @@ withHopType ::
     forall s a r. (Data s, Typeable a)
     => Proxy (s, a)
     -> Hop ByteString
-    -> (forall d. Data d => Proxy d -> r)
-    -> (forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r)
+    -> TypeQuery r
+    -> FieldQuery
     -> r
 withHopType _p (Field cpos fpos) go _ =
     maybe (error $ "withHopType - " ++ show (typeRep (Proxy :: Proxy s)) ++ " constructor index out of range: " ++ show cpos)
@@ -135,7 +140,7 @@ withHopType p h go goIxed =
 withHopTypeIndexed ::
     forall s r. (Data s, Data (IxValue s))
     => Hop ByteString
-    -> (forall d. Data d => Proxy d -> r)
+    -> TypeQuery r
     -> Proxy (s, IxValue s)
     -> r
 withHopTypeIndexed (IndexHop _) go _p = go (Proxy :: Proxy (IxValue s))
@@ -159,7 +164,7 @@ withHopTypeIndexed h go _p = withHopType _p h go goFieldNull
 withHopTraversal ::
     forall s a r. (Data s, Typeable a)
     => (Traversal' s a -> r)
-    -> (forall s a r. (Data s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (Traversal' s a -> r) -> r)
+    -> IxedQuery
     -> Hop ByteString
     -> r
 withHopTraversal go _ h@(Field _cpos fpos) =
@@ -205,19 +210,9 @@ goFieldNull ::
     forall s r. (Typeable s)
     => Proxy s
     -> Hop ByteString
-    -> (forall d. Data d => Proxy d -> r)
+    -> TypeQuery r
     -> r
 goFieldNull p h go = error "goIxedNull"
-
-{-
-goIxed3Test ::
-    forall s a r. (Typeable s, Typeable a)
-    => Proxy (s, a)
-    -> Hop ByteString
-    -> (forall d. Data d => Proxy d -> r)
-    -> r
-goIxed3Test p h go = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
--}
 
 goIxedNull ::
     forall s a r. (Typeable s, Typeable a)
@@ -238,6 +233,17 @@ castTraversal _ l =
       (Just Refl, Just Refl) -> l
       _ -> const pure
 
+-- | Type safe cast of a traversal
+castTraversal' ::
+    forall a b f s t proxy. (Applicative f, Typeable a, Typeable b, Typeable s, Typeable t)
+    => proxy (t, b) -> proxy (s, a)
+    -> ((a -> f a) -> s -> f s) -- Traversal' s a
+    -> ((b -> f b) -> t -> f t) -- (Traversal' t b)
+castTraversal' _ _ l =
+    case (eqT :: Maybe (s :~: t), eqT :: Maybe (a :~: b)) of
+      (Just Refl, Just Refl) -> l
+      _ -> const pure
+
 -- * Template Haskell
 
 makeFieldQuery :: Name -> Q [Dec]
@@ -250,7 +256,7 @@ makeFieldQuery name = do
   ixedTypes <- mapM (\(n, InstanceD _ _ (AppT (ConT _) typ) _) -> (,) <$> newName ("f" ++ show n) <*>  pure typ) (zip ([1..] :: [Int]) ixedInstances)
   fieldDecs <- makeFieldDecs (varE hop) (varE go) (varT r) ixedTypes
   sequence
-    [ sigD name [t| forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r |]
+    [ sigD name [t|FieldQuery|]
     , funD name [clause [] (normalB [|mkQ (error "No Ixed instance for " ++ show (typeRep (Proxy :: Proxy s))) $(buildQuery ixedTypes)|])
                    (fmap pure fieldDecs)] ]
     where

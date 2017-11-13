@@ -4,7 +4,7 @@ import Control.Lens
 import Data.ByteString (ByteString)
 import Data.Generics (Data, extQ, mkQ, Typeable, typeRep, Proxy(Proxy), constrs)
 import Data.Map (Map, fromList)
-import Data.Serialize (encode)
+import Data.Serialize (encode, Serialize)
 import Demo3
 import System.Process
 import System.Posix.Types
@@ -27,9 +27,9 @@ goFieldTest _proxy h go = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
     where
       e :: r
       e = error $ "goIxed - unsupported Ixed type: " ++ show (typeRep (Proxy :: Proxy s))
-      f1 :: Proxy ([Int], Int) -> r
+      f1 :: Proxy ([Int], IxValue [Int]) -> r
       f1 p = withHopTypeIndexed h go p
-      f2 :: Proxy ([String], String) -> r
+      f2 :: Proxy ([String], IxValue [String]) -> r
       f2 p = withHopTypeIndexed h go p
 
 goIxedTest ::
@@ -38,15 +38,20 @@ goIxedTest ::
     -> Hop ByteString
     -> (Traversal' s a -> r)
     -> r
-goIxedTest _proxy h f = f $ (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
+goIxedTest p h f = f $ (mkQ e (f1 p h) `extQ` (f2 p h) `extQ` (f3' p h)) (Proxy :: Proxy (s, a))
     where
       e :: Traversal' s a
       e = error $ "traversalFromHop - unknown or unsupported Ixed type: t=" ++ show (typeRep (Proxy :: Proxy s)) ++
                   ", Index t= " ++ show (typeRep (Proxy :: Proxy a))
-      f1 :: Proxy ([Int], Int) -> Traversal' s a
-      f1 _ = withHopTraversalIndexed h (castTraversal (Proxy :: Proxy ([Int], s, Int, a)))
-      f2 :: Proxy ([String], String) -> Traversal' s a
-      f2 _ = withHopTraversalIndexed h (castTraversal (Proxy :: Proxy ([String], s, String, a)))
+
+f1 :: (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> Proxy ([Int], IxValue [Int]) -> Traversal' s a
+f1 p h q = withHopTraversalIndexed h (castTraversal' p q)
+f2 :: (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> Proxy ([String], IxValue [String]) -> Traversal' s a
+f2 p h q = withHopTraversalIndexed h (castTraversal' p q)
+f3' :: (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> Proxy (Map Int Float, IxValue (Map Int Float)) -> Traversal' s a
+f3' p h q = withHopTraversalIndexed h (castTraversal' p q)
+f3 :: (Typeable s, Typeable a, Data k, Ord k, Serialize k, Data v) => Proxy (s, a) -> Hop ByteString -> Proxy (Map k v, IxValue (Map k v)) -> Traversal' s a
+f3 p h q = withHopTraversalIndexed h (castTraversal' p q)
 
 deriving instance Data CUid
 deriving instance Data CGid
@@ -87,7 +92,7 @@ tests =
                 (toListOf (withHopTraversal id goIxedTest (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]))
   , TestCase (assertEqual "withHopTraversal 5" [7]
                 (toListOf (withHopTraversal id goIxedTest (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]))
-  , TestCase (assertEqual "withHopTraversal 6" []
+  , TestCase (assertEqual "withHopTraversal 6" [] -- empty traversal
                 (toListOf (withHopTraversal id goIxedTest (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)]))) -- "withHopTraversal - unknown or unsupported Ixed type: t=Map Char Float, Index t= Float"
   , TestCase (assertEqual "withHopTraversalIndexed 1" [7]
                 (toListOf (withHopTraversalIndexed (IndexHop (encode (2 :: Int))) id :: Traversal' [Int] Int) [9,8,7,6]))
