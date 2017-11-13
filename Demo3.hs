@@ -6,26 +6,27 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Demo3 where
+module Demo3
+    ( Hop(..)
+    , TraversalPath(..)
+    , traversalFromPath
+    , withHopType
+    , withHopTypeIndexed
+    , withHopTraversal
+    , withHopTraversalIndexed
+    , castTraversal
+    , makeFieldQuery
+    ) where
 
 import Control.Lens
+import Data.ByteString (ByteString)
 import Data.Data.Lens
-import Data.ByteString hiding (drop, empty, intercalate)
 import Data.Generics
 import Data.List (intercalate)
 import Data.Maybe
 import Data.Serialize
-
--- For instances
-import Data.Monoid (mempty)
-import Data.Map (Map)
-
--- For testing
-import System.Process
-import System.Posix.Types
-import GHC.IO.Handle
-
 import Debug.Show
+import Language.Haskell.TH
 
 data TraversalPath s a = TraversalPath {_traversalPathHops :: [Hop ByteString]}
 
@@ -178,19 +179,19 @@ withHopTraversal go goIxed3 h@(IndexHop bytes) = goIxed3 (Proxy :: Proxy (s, a))
 
 -- | withHopTraversal, extended to use the IxValue instance of s to get the hop type.
 -- @@
--- λ> toListOf (withHopTraversalIndexed id (IndexHop (encode (2 :: Int))) :: Traversal' [Int] Int) [9,8,7,6]
+-- λ> toListOf (withHopTraversalIndexed (IndexHop (encode (2 :: Int))) id :: Traversal' [Int] Int) [9,8,7,6]
 -- [7]
--- λ> toListOf (withHopTraversalIndexed id (IndexHop (encode (2 :: Int))) :: Traversal' [String] String) ["a","b","c","d"]
+-- λ> toListOf (withHopTraversalIndexed (IndexHop (encode (2 :: Int))) id :: Traversal' [String] String) ["a","b","c","d"]
 -- ["c"]
--- λ> toListOf (withHopTraversalIndexed id (IndexHop (encode 'b')) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)] :: Map Char Float)
+-- λ> toListOf (withHopTraversalIndexed (IndexHop (encode 'b')) id :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)] :: Map Char Float)
 -- [1.5]
 -- @@
 withHopTraversalIndexed ::
     forall s r. (Data s, Ixed s, Typeable (Index s), Serialize (Index s), Typeable (IxValue s))
-    => (Traversal' s (IxValue s) -> r)
-    -> Hop ByteString
+    => Hop ByteString
+    -> (Traversal' s (IxValue s) -> r)
     -> r
-withHopTraversalIndexed go (IndexHop bytes) =
+withHopTraversalIndexed (IndexHop bytes) go =
     go (idx (decode bytes :: Either String (Index s)))
     where
       idx :: Either String (Index s) -> Traversal' s (IxValue s)
@@ -198,7 +199,7 @@ withHopTraversalIndexed go (IndexHop bytes) =
       idx (Right k) = go' k
       go' :: Index s -> Traversal' s (IxValue s)
       go' k = castTraversal (Proxy :: Proxy (s, s, IxValue s, a)) (ix k)
-withHopTraversalIndexed go h = withHopTraversal go goIxedNull h
+withHopTraversalIndexed h go = withHopTraversal go goIxedNull h
 
 goFieldNull ::
     forall s r. (Typeable s)
@@ -237,10 +238,36 @@ castTraversal _ l =
       (Just Refl, Just Refl) -> l
       _ -> const pure
 
--- For testing
+-- * Template Haskell
 
-deriving instance Data CUid
-deriving instance Data CGid
-deriving instance Data CmdSpec
-deriving instance Data StdStream
-deriving instance Data CreateProcess
+makeFieldQuery :: Name -> Q [Dec]
+makeFieldQuery name = do
+  hop <- newName "hop"
+  go <- newName "go"
+  s <- newName "s"
+  r <- newName "r"
+  (ClassI _ ixedInstances) <- reify ''Ixed
+  ixedTypes <- mapM (\(n, InstanceD _ _ (AppT (ConT _) typ) _) -> (,) <$> newName ("f" ++ show n) <*>  pure typ) (zip ([1..] :: [Int]) ixedInstances)
+  fieldDecs <- makeFieldDecs (varE hop) (varE go) (varT r) ixedTypes
+  sequence
+    [ sigD name [t| forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (forall d. Data d => Proxy d -> r) -> r |]
+    , funD name [clause [] (normalB [|mkQ (error "No Ixed instance for " ++ show (typeRep (Proxy :: Proxy s))) $(buildQuery ixedTypes)|])
+                   (fmap pure fieldDecs)] ]
+    where
+      buildQuery :: [(Name, Type)] -> ExpQ
+      buildQuery [] = error "No Ixed instances found!"
+      buildQuery [(fn, _)] = varE fn
+      buildQuery ((fn, _) : ts) = [|$(varE fn) `extQ` $(buildQuery ts)|]
+
+      makeFieldDecs :: ExpQ -> ExpQ -> TypeQ -> [(Name, Type)] -> Q [Dec]
+      makeFieldDecs hop go r types = mapM (makeFieldFun hop go r) types
+
+      makeFieldFun :: ExpQ -> ExpQ -> TypeQ -> (Name, Type) -> Q Dec
+      makeFieldFun hop go r (fname, ixed) = do
+        funD fname [clause [] (normalB [|withHopTypeIndexed $hop $go :: Proxy ($(pure ixed), IxValue $(pure ixed)) -> $r|]) []]
+
+makeIxedFun :: TypeQ -> TypeQ -> ExpQ -> TypeQ -> Q Dec
+makeIxedFun s a hop ixed = do
+  f <- newName "f"
+  p <- newName "p"
+  funD f [clause [varP p] (normalB [|withHopTraversalIndexed $hop (castTraversal ($(varE p) :: Proxy ($ixed, IxValue $ixed))) :: Traversal' $s $a|]) []]
