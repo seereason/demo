@@ -1,17 +1,52 @@
-import Demo3
-import Test.HUnit
-import Control.Lens
-
--- For testing
 import Control.Exception (try)
-import Data.Generics (typeRep, Proxy(Proxy), constrs)
+import Control.Lens
+import Data.ByteString (ByteString)
+import Data.Generics (Data, extQ, mkQ, Typeable, typeRep, Proxy(Proxy), constrs)
 import Data.Map (Map, fromList)
 import Data.Serialize (encode)
+import Demo3
+import GHC.IO.Handle
 import System.Process
 import System.Posix.Types
-import GHC.IO.Handle
+import Test.HUnit
 
-main = runTestTT tests
+main :: IO ()
+main = do
+  cts <- runTestTT tests
+  case cts of
+    Counts {errors = 0, failures = 0} -> pure ()
+    _ -> error (showCounts cts)
+
+goFieldTest ::
+    forall s a r. (Typeable s, Typeable a)
+    => Proxy (s, a)
+    -> Hop ByteString
+    -> (forall d. Data d => Proxy d -> r)
+    -> r
+goFieldTest p h go = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
+    where
+      e :: r
+      e = error $ "goIxed - unsupported Ixed type: " ++ show (typeRep (Proxy :: Proxy s))
+      f1 :: Proxy ([Int], Int) -> r
+      f1 p = withHopTypeIndexed h go p
+      f2 :: Proxy ([String], String) -> r
+      f2 p = withHopTypeIndexed h go p
+
+goIxedTest ::
+    forall s a r. (Typeable s, Typeable a)
+    => Proxy (s, a)
+    -> Hop ByteString
+    -> (Traversal' s a -> r)
+    -> r
+goIxedTest p h f = f $ (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
+    where
+      e :: Traversal' s a
+      e = error $ "traversalFromHop - unknown or unsupported Ixed type: t=" ++ show (typeRep (Proxy :: Proxy s)) ++
+                  ", Index t= " ++ show (typeRep (Proxy :: Proxy a))
+      f1 :: Proxy ([Int], Int) -> Traversal' s a
+      f1 _ = withHopTraversalIndexed (castTraversal (Proxy :: Proxy ([Int], s, Int, a))) h
+      f2 :: Proxy ([String], String) -> Traversal' s a
+      f2 _ = withHopTraversalIndexed (castTraversal (Proxy :: Proxy ([String], s, String, a))) h
 
 tests :: Test
 tests =
@@ -33,9 +68,9 @@ tests =
   , TestCase (assertEqual "" ["arg2"]
                 (toListOf (traversalFromPath goFieldTest goIxedTest (TraversalPath [Field 2 2, IndexHop (encode (1 :: Int))]) :: Traversal' CmdSpec String) (RawCommand "cmd" ["arg1", "arg2"])))
   , TestCase (assertEqual "withHopTypeIndexed 1" "Int"
-                (withHopTypeIndexed (Proxy :: Proxy ([Int], Int)) (IndexHop (encode (123 :: Int))) (show . typeRep)))
+                (withHopTypeIndexed (IndexHop (encode (123 :: Int))) (show . typeRep) (Proxy :: Proxy ([Int], Int))))
   , TestCase (assertEqual "withHopTypeIndexed 2" "Float"
-                (withHopTypeIndexed (Proxy :: Proxy (Map Char Float, Float)) (IndexHop (encode 'x')) (show . typeRep)))
+                (withHopTypeIndexed (IndexHop (encode 'x')) (show . typeRep) (Proxy :: Proxy (Map Char Float, Float))))
   , TestCase (assertEqual "withHopTraversal 1" [[]]
                 (toListOf (withHopTraversal id goIxedTest (Field 2 2) :: Traversal' CmdSpec [[Char]]) (constrs !! 1)))
   , TestCase (assertEqual "withHopTraversal 2" [""]
