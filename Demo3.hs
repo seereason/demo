@@ -1,14 +1,23 @@
 {-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Demo3
     ( Hop(..)
     , TraversalPath(..)
+    , TypeQuery
+    , TraversalQuery
+    , FieldQuery
+    , IxedQuery
     , traversalFromPath
     , withHopType
     , withHopTypeIndexed
@@ -45,8 +54,9 @@ data Hop key
     deriving (Show, Functor, Data, Typeable)
 
 type TypeQuery r = forall d. Data d => Proxy d -> r
+type TraversalQuery s a r = Proxy (s, a) -> Traversal' s a -> r
 type FieldQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TypeQuery r -> r
-type IxedQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> (Traversal' s a -> r) -> r
+type IxedQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TraversalQuery s a r -> r
 
 -- | Convert a sequence of Hops into a traversal:
 -- @@
@@ -69,7 +79,7 @@ traversalFromPath goField goIxed (TraversalPath (h : hs)) =
     where
       go :: forall b. Data b => Proxy b -> Traversal' s a
       go _ =
-          (withHopTraversal id goIxed h :: Traversal' s b) .
+          (withHopTraversal (\(Proxy :: Proxy (s, b)) -> id) goIxed h :: Traversal' s b) .
           (traversalFromPath goField goIxed (TraversalPath hs) :: Traversal' b a)
 
 instance Show (V TypeRep) where
@@ -163,20 +173,20 @@ withHopTypeIndexed h go _p = withHopType _p h go goFieldNull
 -- @@
 withHopTraversal ::
     forall s a r. (Data s, Typeable a)
-    => (Traversal' s a -> r)
+    => TraversalQuery s a r
     -> IxedQuery
     -> Hop ByteString
     -> r
 withHopTraversal go _ h@(Field _cpos fpos) =
     -- Build a function to extract the requested field
-    go (onceUpon' (gmapQi (pred fpos) go'))
+    go (Proxy :: Proxy (s, a)) (onceUpon' (gmapQi (pred fpos) go'))
     where
       -- Use cast to verify that the extracted field type is @a@
       go' :: forall b. Data b => b -> a
       go' b = fromMaybe (error $ "invalid field hop for " ++ gshow b ++ ": " ++ show h) (cast b)
 withHopTraversal go _ h@(TupleHop n) =
     -- Build a function to extract the requested tuple field
-    go (onceUpon' (gmapQi (pred n) go'))
+    (go (Proxy :: Proxy (s, a))) (onceUpon' (gmapQi (pred n) go'))
     where
       go' :: forall b. Data b => b -> a
       go' b = fromMaybe (error $ "invalid field hop for " ++ gshow b ++ ": " ++ show h) (cast b)
@@ -194,10 +204,10 @@ withHopTraversal go goIxed3 h@(IndexHop bytes) = goIxed3 (Proxy :: Proxy (s, a))
 withHopTraversalIndexed ::
     forall s r. (Data s, Ixed s, Typeable (Index s), Serialize (Index s), Typeable (IxValue s))
     => Hop ByteString
-    -> (Traversal' s (IxValue s) -> r)
+    -> TraversalQuery s (IxValue s) r
     -> r
 withHopTraversalIndexed (IndexHop bytes) go =
-    go (idx (decode bytes :: Either String (Index s)))
+    go (Proxy :: Proxy (s, IxValue s)) (idx (decode bytes :: Either String (Index s)))
     where
       idx :: Either String (Index s) -> Traversal' s (IxValue s)
       idx (Left s) = error $ "Error decoding " ++ show bytes ++ " to " ++ show (typeRep (Proxy :: Proxy (Index s))) ++ ": " ++ s
@@ -206,20 +216,10 @@ withHopTraversalIndexed (IndexHop bytes) go =
       go' k = castTraversal (Proxy :: Proxy (s, s, IxValue s, a)) (ix k)
 withHopTraversalIndexed h go = withHopTraversal go goIxedNull h
 
-goFieldNull ::
-    forall s r. (Typeable s)
-    => Proxy s
-    -> Hop ByteString
-    -> TypeQuery r
-    -> r
+goFieldNull :: FieldQuery
 goFieldNull p h go = error "goIxedNull"
 
-goIxedNull ::
-    forall s a r. (Typeable s, Typeable a)
-    => Proxy (s, a)
-    -> Hop ByteString
-    -> (Traversal' s a -> r)
-    -> r
+goIxedNull :: IxedQuery
 goIxedNull _ _ _ = error "goIxed2Null"
 
 -- | Type safe cast of a traversal
