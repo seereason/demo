@@ -1,14 +1,18 @@
 {-# OPTIONS -Wall -fno-warn-orphans -ddump-splices #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 
 import Control.Lens
 import Data.ByteString (ByteString)
-import Data.Generics (Data, extQ, mkQ, Typeable, typeRep, Proxy(Proxy), constrs)
+import Data.Generics (Data, extQ, mkQ, Typeable, TypeRep, typeRep, typeRepArgs, typeRepFingerprint, typeRepTyCon, Proxy(Proxy), constrs)
+import Data.List (intercalate)
 import Data.Map (Map, fromList)
 import Data.Serialize (encode, Serialize)
+import Debug.Show
 import Demo3
 import System.Process
 import System.Posix.Types
@@ -21,12 +25,7 @@ main = do
     Counts {errors = 0, failures = 0} -> pure ()
     _ -> error (showCounts cts)
 
-goFieldTest ::
-    forall s a r. (Typeable s, Typeable a)
-    => Proxy (s, a)
-    -> Hop ByteString
-    -> TypeQuery r
-    -> r
+goFieldTest :: forall s a r. FieldQuery s a r
 goFieldTest _proxy h go = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
     where
       e :: r
@@ -36,12 +35,7 @@ goFieldTest _proxy h go = (mkQ e f1 `extQ` f2) (Proxy :: Proxy (s, a))
       f2 :: Proxy ([String], IxValue [String]) -> r
       f2 p = withHopTypeIndexed h go p
 
-goIxedTest ::
-    forall s a r. (Typeable s, Typeable a)
-    => Proxy (s, a)
-    -> Hop ByteString
-    -> TraversalQuery s a r
-    -> r
+goIxedTest :: forall s a r. IxedQuery s a r
 goIxedTest p h f = f (Proxy) ((mkQ e (f1 p h) `extQ` (f2 p h) `extQ` (f3' p h)) (Proxy :: Proxy (s, a)))
     where
       e :: Traversal' s a
@@ -105,3 +99,15 @@ tests =
   , TestCase (assertEqual "withHopTraversalIndexed 3" [1.5]
                 (toListOf (withHopTraversalIndexed (IndexHop (encode 'b')) (\Proxy -> id) :: Traversal' (Map Char Float) Float) (fromList [('a', 1.2), ('b', 1.5)] :: Map Char Float)))
   ]
+
+instance Show (V TypeRep) where
+    show (V t) =
+        "TypeRep (" ++
+          (intercalate ") ("
+           [show (typeRepFingerprint t),
+            show (typeRepTyCon t),
+            "[KindRep list]",
+            show (V (typeRepArgs t))] :: String) ++ ")"
+
+instance Show (V a) => Show (V [a]) where
+    show (V xs) = "[" ++ intercalate ", " (fmap (show . V) xs) ++ "]"

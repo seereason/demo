@@ -28,14 +28,13 @@ module Demo3
     , makeFieldQuery
     ) where
 
-import Control.Lens
+import Control.Lens (Index, Ixed(ix), IxValue, Traversal')
 import Data.ByteString (ByteString)
-import Data.Data.Lens
-import Data.Generics
+import Data.Data.Lens (onceUpon')
+import Data.Generics (cast, constrs, Data, empty, eqT, gmapQi, gshow, Proxy(Proxy), Typeable, typeRep, (:~:)(Refl))
 import Data.List (intercalate)
-import Data.Maybe
-import Data.Serialize
-import Debug.Show
+import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Serialize (decode, Serialize)
 import Language.Haskell.TH
 
 data TraversalPath s a = TraversalPath {_traversalPathHops :: [Hop ByteString]}
@@ -55,8 +54,8 @@ data Hop key
 
 type TypeQuery r = forall d. Data d => Proxy d -> r
 type TraversalQuery s a r = Proxy (s, a) -> Traversal' s a -> r
-type FieldQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TypeQuery r -> r
-type IxedQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TraversalQuery s a r -> r
+type FieldQuery s a r = (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TypeQuery r -> r
+type IxedQuery s a r = (Typeable s, Typeable a) => Proxy (s, a) -> Hop ByteString -> TraversalQuery s a r -> r
 
 -- | Convert a sequence of Hops into a traversal:
 -- @@
@@ -69,8 +68,8 @@ type IxedQuery = forall s a r. (Typeable s, Typeable a) => Proxy (s, a) -> Hop B
 -- @@
 traversalFromPath ::
     forall s a. (Data s, Typeable a)
-    => FieldQuery
-    -> IxedQuery
+    => (forall s a r. FieldQuery s a r)
+    -> (forall s a r. IxedQuery s a r)
     -> TraversalPath s a
     -> Traversal' s a
 traversalFromPath _ _ (TraversalPath []) = castTraversal (Proxy :: Proxy (s, s, s, a)) id
@@ -81,18 +80,6 @@ traversalFromPath goField goIxed (TraversalPath (h : hs)) =
       go _ =
           (withHopTraversal (\(Proxy :: Proxy (s, b)) -> id) goIxed h :: Traversal' s b) .
           (traversalFromPath goField goIxed (TraversalPath hs) :: Traversal' b a)
-
-instance Show (V TypeRep) where
-    show (V t) =
-        "TypeRep (" ++
-          (intercalate ") ("
-           [show (typeRepFingerprint t),
-            show (typeRepTyCon t),
-            "[KindRep list]",
-            show (V (typeRepArgs t))] :: String) ++ ")"
-
-instance Show (V a) => Show (V [a]) where
-    show (V xs) = "[" ++ intercalate ", " (fmap (show . V) xs) ++ "]"
 
 -- | Given a type @s@, determine the type @a@ resulting from doing some
 -- hop and apply it to a function @go@.
@@ -118,7 +105,7 @@ withHopType ::
     => Proxy (s, a)
     -> Hop ByteString
     -> TypeQuery r
-    -> FieldQuery
+    -> FieldQuery s a r
     -> r
 withHopType _p (Field cpos fpos) go _ =
     maybe (error $ "withHopType - " ++ show (typeRep (Proxy :: Proxy s)) ++ " constructor index out of range: " ++ show cpos)
@@ -174,7 +161,7 @@ withHopTypeIndexed h go _p = withHopType _p h go goFieldNull
 withHopTraversal ::
     forall s a r. (Data s, Typeable a)
     => TraversalQuery s a r
-    -> IxedQuery
+    -> IxedQuery s a r
     -> Hop ByteString
     -> r
 withHopTraversal go _ h@(Field _cpos fpos) =
@@ -216,10 +203,10 @@ withHopTraversalIndexed (IndexHop bytes) go =
       go' k = castTraversal (Proxy :: Proxy (s, s, IxValue s, a)) (ix k)
 withHopTraversalIndexed h go = withHopTraversal go goIxedNull h
 
-goFieldNull :: FieldQuery
+goFieldNull :: forall s a r. FieldQuery s a r
 goFieldNull p h go = error "goIxedNull"
 
-goIxedNull :: IxedQuery
+goIxedNull :: forall s a r. IxedQuery s a r
 goIxedNull _ _ _ = error "goIxed2Null"
 
 -- | Type safe cast of a traversal
@@ -256,7 +243,7 @@ makeFieldQuery name = do
   ixedTypes <- mapM (\(n, InstanceD _ _ (AppT (ConT _) typ) _) -> (,) <$> newName ("f" ++ show n) <*>  pure typ) (zip ([1..] :: [Int]) ixedInstances)
   fieldDecs <- makeFieldDecs (varE hop) (varE go) (varT r) ixedTypes
   sequence
-    [ sigD name [t|FieldQuery|]
+    [ sigD name [t|forall s a r. FieldQuery s a r|]
     , funD name [clause [] (normalB [|mkQ (error "No Ixed instance for " ++ show (typeRep (Proxy :: Proxy s))) $(buildQuery ixedTypes)|])
                    (fmap pure fieldDecs)] ]
     where
